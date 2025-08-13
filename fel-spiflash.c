@@ -30,10 +30,13 @@ typedef struct {
 	uint32_t  id;
 	uint8_t   write_enable_cmd;
 	uint8_t   large_erase_cmd;
+	uint8_t   large_erase_cmd_big;
 	uint32_t  large_erase_size;
 	uint8_t   small_erase_cmd;
+	uint8_t   small_erase_cmd_big;
 	uint32_t  small_erase_size;
 	uint8_t   program_cmd;
+	uint8_t   program_cmd_big;
 	uint32_t  program_size;
 	char     *text_description;
 } spi_flash_info_t;
@@ -58,11 +61,13 @@ spi_flash_info_t spi_flash_info[] = {
 
 spi_flash_info_t default_spi_flash_info = {
 	.id = 0x0000, .write_enable_cmd = 0x6,
-	.large_erase_cmd = 0xD8, .large_erase_size = 64 * 1024,
-	.small_erase_cmd = 0x20, .small_erase_size =  4 * 1024,
-	.program_cmd = 0x02, .program_size = 256,
+	.large_erase_cmd = 0xD8, .large_erase_cmd_big = 0xDC, .large_erase_size = 64 * 1024,
+	.small_erase_cmd = 0x20, .small_erase_cmd_big = 0x21, .small_erase_size =  4 * 1024,
+	.program_cmd = 0x02, .program_cmd_big = 0x12, .program_size = 256,
 	.text_description = "Unknown",
 };
+
+bool spi_flash_big;
 
 /*****************************************************************************/
 
@@ -399,19 +404,20 @@ void aw_fel_spiflash_read(feldev_handle *dev,
 			chunk_size = max_chunk_size - 8;
 
 		memset(cmdbuf, 0, max_chunk_size);
-		cmdbuf[0] = (chunk_size + 4) >> 8;
-		cmdbuf[1] = (chunk_size + 4);
-		cmdbuf[2] = 3;
-		cmdbuf[3] = offset >> 16;
-		cmdbuf[4] = offset >> 8;
-		cmdbuf[5] = offset;
+		cmdbuf[2 + spi_flash_big] = offset >> 24;
+		cmdbuf[0] = (chunk_size + 4 + spi_flash_big) >> 8;
+		cmdbuf[1] = (chunk_size + 4 + spi_flash_big);
+		cmdbuf[2] = spi_flash_big ? 0x13 : 0x03;
+		cmdbuf[3 + spi_flash_big] = offset >> 16;
+		cmdbuf[4 + spi_flash_big] = offset >> 8;
+		cmdbuf[5 + spi_flash_big] = offset;
 
 		if (chunk_size == max_chunk_size - 8)
-			aw_fel_write(dev, cmdbuf, soc_info->spl_addr, 6);
+			aw_fel_write(dev, cmdbuf, soc_info->spl_addr, 6 + spi_flash_big);
 		else
 			aw_fel_write(dev, cmdbuf, soc_info->spl_addr, chunk_size + 8);
 		aw_fel_remotefunc_execute(dev, NULL);
-		aw_fel_read(dev, soc_info->spl_addr + 6, buf8, chunk_size);
+		aw_fel_read(dev, soc_info->spl_addr + 6 + spi_flash_big, buf8, chunk_size);
 
 		len -= chunk_size;
 		offset += chunk_size;
@@ -431,8 +437,8 @@ void aw_fel_spiflash_read(feldev_handle *dev,
 
 void aw_fel_spiflash_write_helper(feldev_handle *dev,
 				  uint32_t offset, void *buf, size_t len,
-				  size_t erase_size, uint8_t erase_cmd,
-				  size_t program_size, uint8_t program_cmd)
+				  size_t erase_size, uint8_t erase_cmd, uint8_t erase_cmd_big,
+				  size_t program_size, uint8_t program_cmd, uint8_t program_cmd_big)
 {
 	soc_info_t *soc_info = dev->soc_info;
 	uint8_t *buf8 = (uint8_t *)buf;
@@ -455,8 +461,9 @@ void aw_fel_spiflash_write_helper(feldev_handle *dev,
 				cmdbuf[cmd_idx++] = CMD_WRITE_ENABLE;
 				/* Emit erase command */
 				cmdbuf[cmd_idx++] = 0;
-				cmdbuf[cmd_idx++] = 4;
-				cmdbuf[cmd_idx++] = erase_cmd;
+				cmdbuf[cmd_idx++] = 4 + spi_flash_big;
+				cmdbuf[cmd_idx++] = spi_flash_big ? erase_cmd_big : erase_cmd;
+				if(spi_flash_big) cmdbuf[cmd_idx++] = offset >> 24;
 				cmdbuf[cmd_idx++] = offset >> 16;
 				cmdbuf[cmd_idx++] = offset >> 8;
 				cmdbuf[cmd_idx++] = offset;
@@ -472,9 +479,10 @@ void aw_fel_spiflash_write_helper(feldev_handle *dev,
 			size_t write_count = program_size;
 			if (write_count > len)
 				write_count = len;
-			cmdbuf[cmd_idx++] = (4 + write_count) >> 8;
-			cmdbuf[cmd_idx++] = 4 + write_count;
-			cmdbuf[cmd_idx++] = program_cmd;
+			cmdbuf[cmd_idx++] = (4 + spi_flash_big + write_count) >> 8;
+			cmdbuf[cmd_idx++] = 4 + spi_flash_big + write_count;
+			cmdbuf[cmd_idx++] = spi_flash_big ? program_cmd_big : program_cmd;
+			if(spi_flash_big) cmdbuf[cmd_idx++] = offset >> 24;
 			cmdbuf[cmd_idx++] = offset >> 16;
 			cmdbuf[cmd_idx++] = offset >> 8;
 			cmdbuf[cmd_idx++] = offset;
@@ -529,16 +537,16 @@ void aw_fel_spiflash_write(feldev_handle *dev,
 				write_count = len;
 			aw_fel_spiflash_write_helper(dev, offset, buf8,
 				write_count,
-				flash_info->small_erase_size, flash_info->small_erase_cmd,
-				flash_info->program_size, flash_info->program_cmd);
+				flash_info->small_erase_size, flash_info->small_erase_cmd, flash_info->small_erase_cmd_big,
+				flash_info->program_size, flash_info->program_cmd, flash_info->program_cmd_big);
 		} else {
 			write_count = flash_info->large_erase_size;
 			if (write_count > len)
 				write_count = len;
 			aw_fel_spiflash_write_helper(dev, offset, buf8,
 				write_count,
-				flash_info->large_erase_size, flash_info->large_erase_cmd,
-				flash_info->program_size, flash_info->program_cmd);
+				flash_info->large_erase_size, flash_info->large_erase_cmd, flash_info->large_erase_cmd_big,
+				flash_info->program_size, flash_info->program_cmd, flash_info->program_cmd_big);
 		}
 
 		len    -= write_count;

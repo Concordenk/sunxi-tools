@@ -36,6 +36,7 @@ bool verbose = false; /* If set, makes the 'fel' tool more talkative */
 static uint32_t uboot_entry = 0; /* entry point (address) of U-Boot */
 static uint32_t uboot_size  = 0; /* size of U-Boot binary */
 static bool enter_in_aarch64 = false;
+extern bool spi_flash_big;
 
 /* printf-style output, but only if "verbose" flag is active */
 #define pr_info(...) \
@@ -1247,6 +1248,7 @@ void usage(const char *cmd) {
 		"	-v, --verbose			Verbose logging\n"
 		"	-p, --progress			\"write\" transfers show a progress bar\n"
 		"	-l, --list			Enumerate all (USB) FEL devices and exit\n"
+		"	-b, --big			Assume big SPI flash (> 16 MB)\n"
 		"	-d, --dev bus:devnum		Use specific USB bus and device number\n"
 		"	    --sid SID			Select device by SID key (exact match)\n"
 		"	    --list-socs			Print a list of all supported SoCs\n"
@@ -1314,6 +1316,8 @@ int main(int argc, char **argv)
 			verbose = true;
 		else if (strcmp(argv[1], "--progress") == 0 || strcmp(argv[1], "-p") == 0)
 			pflag_active = true;
+		else if (strcmp(argv[1], "--big") == 0 || strcmp(argv[1], "-b") == 0)
+			spi_flash_big = true;
 		else if (strcmp(argv[1], "--list") == 0 || strcmp(argv[1], "-l") == 0
 			 || strcmp(argv[1], "list") == 0)
 			device_list = true;
