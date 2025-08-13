@@ -88,8 +88,8 @@ void fel_writel(feldev_handle *dev, uint32_t addr, uint32_t val);
 #define SUNIV_PLL6_CTL              (0x01c20000 + 0x28)
 #define SUNIV_AHB_APB_CFG           (0x01c20000 + 0x54)
 
-#define H6_CCM_SPI0_CLK             (0x03001000 + 0x940)
-#define H6_CCM_SPI_BGR              (0x03001000 + 0x96C)
+#define H6_CCM_SPI0_CLK             (0x940)
+#define H6_CCM_SPI_BGR              (0x96C)
 #define H6_CCM_SPI0_GATE_RESET      (1 << 0 | 1 << 16)
 
 #define SUNIV_GPC_SPI0              (2)
@@ -127,7 +127,7 @@ void fel_writel(feldev_handle *dev, uint32_t addr, uint32_t val);
 #define CCM_SPI0_CLK_DIV_BY_6       (0x1002)
 #define CCM_SPI0_CLK_DIV_BY_32      (0x100f)
 
-static uint32_t gpio_base(feldev_handle *dev)
+static uint32_t gpio_base(feldev_handle *dev, int portnum)
 {
 	soc_info_t *soc_info = dev->soc_info;
 	switch (soc_info->soc_id) {
@@ -135,9 +135,11 @@ static uint32_t gpio_base(feldev_handle *dev)
 	case 0x1817: /* V831 */
 	case 0x1728: /* H6 */
 	case 0x1823: /* H616 */
-		return 0x0300B000;
+		return 0x0300B000 + (portnum * 0x24);
+	case 0x1859: /* R528 */
+		return 0x02000000 + (portnum * 0x30);
 	default:
-		return 0x01C20800;
+		return 0x01C20800 + (portnum * 0x24);
 	}
 }
 
@@ -156,6 +158,8 @@ static uint32_t spi_base(feldev_handle *dev)
 	case 0x1728: /* H6 */
 	case 0x1823: /* H616 */
 		return 0x05010000;
+	case 0x1859: /* R528 */
+		return 0x04025000;
 	default:
 		return 0x01C68000;
 	}
@@ -167,11 +171,11 @@ static uint32_t spi_base(feldev_handle *dev)
 static void gpio_set_cfgpin(feldev_handle *dev, int port_num, int pin_num,
 			    int val)
 {
-	uint32_t port_base = gpio_base(dev) + port_num * 0x24;
+	uint32_t port_base = gpio_base(dev, port_num);
 	uint32_t cfg_reg   = port_base + 4 * (pin_num / 8);
 	uint32_t pin_idx   = pin_num % 8;
 	uint32_t x = readl(cfg_reg);
-	x &= ~(0x7 << (pin_idx * 4));
+	x &= ~(0xF << (pin_idx * 4));
 	x |= val << (pin_idx * 4);
 	writel(x, cfg_reg);
 }
@@ -189,7 +193,7 @@ static bool spi_is_sun6i(feldev_handle *dev)
 	}
 }
 
-static bool soc_is_h6_style(feldev_handle *dev)
+static uint32_t spi_h6_ccm_base(feldev_handle *dev)
 {
 	soc_info_t *soc_info = dev->soc_info;
 	switch (soc_info->soc_id) {
@@ -197,9 +201,11 @@ static bool soc_is_h6_style(feldev_handle *dev)
 	case 0x1817: /* V831 */
 	case 0x1728: /* H6 */
 	case 0x1823: /* H616 */
-		return true;
+		return 0x03001000;
+	case 0x1859: /* R528 */
+		return 0x02001000;
 	default:
-		return false;
+		return 0;
 	}
 }
 
@@ -208,7 +214,7 @@ static bool soc_is_h6_style(feldev_handle *dev)
  */
 static bool spi0_init(feldev_handle *dev)
 {
-	uint32_t reg_val;
+	uint32_t reg_val, h6ccmbase;
 	soc_info_t *soc_info = dev->soc_info;
 	if (!soc_info) {
 		printf("Unable to fetch device information. "
@@ -264,16 +270,23 @@ static bool spi0_init(feldev_handle *dev)
 		gpio_set_cfgpin(dev, PC, 3, SUN50I_GPC_SPI0);	/* SPI0_CS0 */
 		gpio_set_cfgpin(dev, PC, 4, SUN50I_GPC_SPI0);	/* SPI0_MISO */
 		break;
+	case 0x1859: /* R528 */
+		gpio_set_cfgpin(dev, PC, 2, SUNIV_GPC_SPI0);	/* SPI0_CLK */
+		gpio_set_cfgpin(dev, PC, 4, SUNIV_GPC_SPI0);	/* SPI0_MOSI */
+		gpio_set_cfgpin(dev, PC, 3, SUNIV_GPC_SPI0);	/* SPI0_CS0 */
+		gpio_set_cfgpin(dev, PC, 5, SUNIV_GPC_SPI0);	/* SPI0_MISO */
+		break;
 	default: /* Unknown/Unsupported SoC */
 		printf("SPI support not implemented yet for %x (%s)!\n",
 		       soc_info->soc_id, soc_info->name);
 		return false;
 	}
 
-	if (soc_is_h6_style(dev)) {
-		reg_val = readl(H6_CCM_SPI_BGR);
+	h6ccmbase = spi_h6_ccm_base(dev);
+	if (h6ccmbase) {
+		reg_val = readl(h6ccmbase + H6_CCM_SPI_BGR);
 		reg_val |= H6_CCM_SPI0_GATE_RESET;
-		writel(reg_val, H6_CCM_SPI_BGR);
+		writel(reg_val, h6ccmbase + H6_CCM_SPI_BGR);
 	} else {
 		if (spi_is_sun6i(dev)) {
 			/* Deassert SPI0 reset */
@@ -307,7 +320,7 @@ static bool spi0_init(feldev_handle *dev)
 		       spi_is_sun6i(dev) ? SUN6I_SPI0_CCTL : SUN4I_SPI0_CCTL);
 		/* Choose 24MHz from OSC24M and enable clock */
 		writel(1U << 31,
-		       soc_is_h6_style(dev) ? H6_CCM_SPI0_CLK : CCM_SPI0_CLK);
+		       h6ccmbase ? (h6ccmbase + H6_CCM_SPI0_CLK) : CCM_SPI0_CLK);
 	}
 
 	if (spi_is_sun6i(dev)) {
