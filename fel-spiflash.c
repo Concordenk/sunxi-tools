@@ -413,8 +413,8 @@ void aw_fel_spiflash_read(feldev_handle *dev,
 	progress_start(progress, len);
 	while (len > 0) {
 		size_t chunk_size = len;
-		if (chunk_size > max_chunk_size - 8)
-			chunk_size = max_chunk_size - 8;
+		if (chunk_size > max_chunk_size - 10)
+			chunk_size = max_chunk_size - 10;
 
 		memset(cmdbuf, 0, max_chunk_size);
 		cmdbuf[2 + spi_flash_big] = offset >> 24;
@@ -425,10 +425,10 @@ void aw_fel_spiflash_read(feldev_handle *dev,
 		cmdbuf[4 + spi_flash_big] = offset >> 8;
 		cmdbuf[5 + spi_flash_big] = offset;
 
-		if (chunk_size == max_chunk_size - 8)
+		if (chunk_size == max_chunk_size - 10)
 			aw_fel_write(dev, cmdbuf, soc_info->spl_addr, 6 + spi_flash_big);
 		else
-			aw_fel_write(dev, cmdbuf, soc_info->spl_addr, chunk_size + 8);
+			aw_fel_write(dev, cmdbuf, soc_info->spl_addr, chunk_size + 8 + spi_flash_big);
 		aw_fel_remotefunc_execute(dev, NULL);
 		aw_fel_read(dev, soc_info->spl_addr + 6 + spi_flash_big, buf8, chunk_size);
 
